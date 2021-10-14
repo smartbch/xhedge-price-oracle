@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache
 pragma solidity >=0.7.0;
 
+import "@uniswap/v2-core/contracts/interfaces/IERC20.sol";
 import "@uniswap/v2-core/contracts/interfaces/IUniswapV2Pair.sol";
 import "@uniswap/v2-periphery/contracts/libraries/UniswapV2OracleLibrary.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
@@ -10,9 +11,11 @@ import "./IPriceOracle.sol";
 struct Pair {
     address addr;
     uint8 wbchIdx;
-    uint priceAverage;
-    uint priceCumulativeLast;
-    uint timestampLast;
+    uint8 usdDecimals;
+    uint priceCumulativeOld;
+    uint timestampOld;
+    uint priceCumulativeNew;
+    uint timestampNew;
 }
 
 contract UniSwapV2OracleSimple is Ownable, IPriceOracle {
@@ -25,6 +28,7 @@ contract UniSwapV2OracleSimple is Ownable, IPriceOracle {
     uint timestampLast;
 
     constructor(address _WBCH, address[] memory pairAddrs) {
+        require(IERC20(_WBCH).decimals() == 18, "Oracle: BAD_WBCH_DECIMALS");
         WBCH = _WBCH;
         for (uint i = 0; i < pairAddrs.length; i++) {
             _addPair(pairAddrs[i], _WBCH);
@@ -36,17 +40,24 @@ contract UniSwapV2OracleSimple is Ownable, IPriceOracle {
     }
 
     function _addPair(address pairAddr, address _WBCH) private {
+        address token0 = IUniswapV2Pair(pairAddr).token0();
+        address token1 = IUniswapV2Pair(pairAddr).token1();
+
         uint8 wbchIdx;
-        if (IUniswapV2Pair(pairAddr).token0() == _WBCH) {
+        uint8 usdDecimals;
+        if (token0 == _WBCH) {
             wbchIdx = 0;
+            usdDecimals = IERC20(token1).decimals();
         } else {
-            require(IUniswapV2Pair(pairAddr).token1() == _WBCH, "Oracle: WBCH_NOT_IN_PAIR");
+            require(token1 == _WBCH, "Oracle: WBCH_NOT_IN_PAIR");
             wbchIdx = 1;
+            usdDecimals = IERC20(token0).decimals();
         }
 
         uint priceCumulative = currentCumulativePrice(pairAddr, wbchIdx);
-        uint priceAverage = (priceCumulative / block.timestamp);
-        pairs.push(Pair(pairAddr, wbchIdx, priceAverage, priceCumulative, block.timestamp));
+        pairs.push(Pair(pairAddr, wbchIdx, usdDecimals, 
+            priceCumulative, block.timestamp, 
+            priceCumulative, block.timestamp));
     }
 
     function removePair(address pairAddr) public onlyOwner {
@@ -70,7 +81,8 @@ contract UniSwapV2OracleSimple is Ownable, IPriceOracle {
         uint nPairs = pairs.length;
         uint priceSum;
         for (uint i = 0; i < nPairs; i++) {
-            priceSum += pairs[i].priceAverage;
+            Pair memory pair = pairs[i];
+            priceSum += getPairPrice(pair);
         }
         return (priceSum / nPairs) * (10**18) / (2**112);
     }
@@ -84,15 +96,26 @@ contract UniSwapV2OracleSimple is Ownable, IPriceOracle {
         timestampLast = ts;
         for (uint i = 0; i < pairs.length; i++) {
             Pair memory pair = pairs[i];
-            uint timeElapsed = ts - pair.timestampLast;
-            if (timeElapsed >= CYCLE) {
-                uint priceCumulative = currentCumulativePrice(pair.addr, pair.wbchIdx);
-                pair.priceAverage = ((priceCumulative - pair.priceCumulativeLast) / timeElapsed);
-                pair.priceCumulativeLast = priceCumulative;
-                pair.timestampLast = ts;
-                pairs[i] = pair;
-            }
+            pair.priceCumulativeOld = pair.priceCumulativeNew;
+            pair.timestampOld = pair.timestampNew;
+            pair.priceCumulativeNew = currentCumulativePrice(pair.addr, pair.wbchIdx);
+            pair.timestampNew = ts;
+            pairs[i] = pair;
         }
+    }
+
+    function getPairPrice(Pair memory pair) private view returns (uint) {
+        uint priceCumulative = currentCumulativePrice(pair.addr, pair.wbchIdx);
+        uint price = (priceCumulative - pair.priceCumulativeOld) / (block.timestamp - pair.timestampOld);
+
+        // align decimals
+        uint8 usdDec = pair.usdDecimals;
+        if (usdDec > 18) {
+            price *= (10 ** (usdDec - 18));
+        } else if (usdDec < 18) {
+            price /= (10 ** (18 - usdDec));
+        }
+        return price;
     }
 
     // price0CumulativeLast = token1/token0

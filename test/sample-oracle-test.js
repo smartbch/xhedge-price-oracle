@@ -31,7 +31,7 @@ describe("UniSwapV2OracleSimple", function () {
     flexPair = SwapPair.attach(flexPairAddr);
     busdPair = SwapPair.attach(busdPairAddr);
     await addLiquidity(flexPair, wBCH, flexUSD, _1e18, 60000n * _1e18, owner);
-    await addLiquidity(busdPair, wBCH, sBUSD,   _1e18, 60000n * 100n, owner);
+    await addLiquidity(busdPair, wBCH, sBUSD,   _1e18, 60000n * 100n,  owner);
 
     Oracle = await ethers.getContractFactory("UniSwapV2OracleSimple");
   });
@@ -67,9 +67,13 @@ describe("UniSwapV2OracleSimple", function () {
       [flexPair.address, flexPair.address, flexPair.address, flexPair.address]);
   });
 
-  it("getPrice", async function () {
-    const oracle = await Oracle.deploy(wBCH.address, [flexPair.address, busdPair.address]);
+  it("get price", async function () {
+    await addLiquidity(flexPair, wBCH, flexUSD, _1e18, 60000n * _1e18, owner);
+    const oracle = await Oracle.deploy(wBCH.address, [flexPair.address]);
     await oracle.deployed();
+    await oracle.getPrice();
+
+    // await printInfo(flexPair);
     expect(await oracle.callStatic.getPrice()).to.equal(60000n * _1e18);
   });
 
@@ -83,6 +87,17 @@ async function addLiquidity(pair, token0, token1, amt0, amt1, owner) {
   await token0.transfer(pair.address, amt0);
   await token1.transfer(pair.address, amt1);
   await pair.mint(owner.address);
+}
+
+async function printInfo(pair) {
+  let [r0, r1, ts] = await pair.getReserves();
+  let p0c = await pair.price0CumulativeLast();
+  let p1c = await pair.price1CumulativeLast();
+  console.log('r0:', r0.toString());
+  console.log('r1:', r1.toString());
+  console.log('ts:', ts);
+  console.log('p0c:', p0c.toString());
+  console.log('p1c:', p1c.toString());
 }
 
 async function getTrackedPairs(oracle) {

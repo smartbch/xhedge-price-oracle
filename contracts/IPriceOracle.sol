@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache
-pragma solidity >=0.6.6;
+pragma solidity >=0.7.0;
 
 interface IPriceOracle {
     function getPrice() external returns (uint);

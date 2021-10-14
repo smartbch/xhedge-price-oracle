@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache
-pragma solidity >=0.6.6;
+pragma solidity >=0.7.0;
 
 import "@uniswap/v2-core/contracts/interfaces/IUniswapV2Pair.sol";
 import "@uniswap/v2-periphery/contracts/libraries/UniswapV2OracleLibrary.sol";
@@ -18,24 +18,29 @@ struct Pair {
 contract UniSwapV2OracleSimple is Ownable, IPriceOracle {
     using SafeMath for uint;
 
-    address public constant WBCH = 0x3743eC0673453E5009310C727Ba4eaF7b3a1cc04;
+    address public immutable WBCH;
     uint public constant CYCLE = 30 minutes;
 
     Pair[] public pairs;
     uint timestampLast;
 
-    constructor(address[] memory pairs) {
-        for (uint i = 0; i < pairs.length; i++) {
-            addPair(pairs[i]);
+    constructor(address _WBCH, address[] memory pairAddrs) {
+        WBCH = _WBCH;
+        for (uint i = 0; i < pairAddrs.length; i++) {
+            _addPair(pairAddrs[i], _WBCH);
         }
     }
 
     function addPair(address pairAddr) public onlyOwner {
+        _addPair(pairAddr, WBCH);
+    }
+
+    function _addPair(address pairAddr, address _WBCH) private {
         uint8 wbchIdx;
-        if (IUniswapV2Pair(pairAddr).token0() == WBCH) {
+        if (IUniswapV2Pair(pairAddr).token0() == _WBCH) {
             wbchIdx = 0;
         } else {
-            require(IUniswapV2Pair(pairAddr).token1() == WBCH, "Oracle: WBCH_NOT_IN_PAIR");
+            require(IUniswapV2Pair(pairAddr).token1() == _WBCH, "Oracle: WBCH_NOT_IN_PAIR");
             wbchIdx = 1;
         }
 

@@ -75,19 +75,7 @@ contract UniSwapV2OracleSimple is Ownable, IPriceOracle {
         pairs.pop();
     }
 
-    function getPrice() external override returns (uint) {
-        update();
-
-        uint nPairs = pairs.length;
-        uint priceSum;
-        for (uint i = 0; i < nPairs; i++) {
-            Pair memory pair = pairs[i];
-            priceSum += getPairPrice(pair);
-        }
-        return (priceSum / nPairs) * (10**18) / (2**112);
-    }
-
-    function update() private {
+    function update() public {
         uint ts = block.timestamp;
         if (ts - timestampLast < CYCLE) {
             return;
@@ -102,6 +90,21 @@ contract UniSwapV2OracleSimple is Ownable, IPriceOracle {
             pair.timestampNew = ts;
             pairs[i] = pair;
         }
+    }
+
+    function getPrice() public override returns (uint) {
+        update();
+        return getPriceWithoutUpdate();
+    }
+
+    function getPriceWithoutUpdate() public view returns (uint) {        
+        uint nPairs = pairs.length;
+        uint priceSum;
+        for (uint i = 0; i < nPairs; i++) {
+            Pair memory pair = pairs[i];
+            priceSum += getPairPrice(pair);
+        }
+        return (priceSum / nPairs) * (10**18) / (2**112);
     }
 
     function getPairPrice(Pair memory pair) private view returns (uint) {

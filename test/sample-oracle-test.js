@@ -9,6 +9,7 @@ describe("UniSwapV2OracleSimple", function () {
 
   let owner, alice, bob;
   let wBCH, flexUSD, sBUSD;
+  let SwapFactory, SwapPair;
   let flexPair, busdPair;
   let Oracle;
 
@@ -20,20 +21,22 @@ describe("UniSwapV2OracleSimple", function () {
     flexUSD = await TestERC20.deploy("flexUSD", 10000000n * _1e18, 18);
     sBUSD = await TestERC20.deploy("sBUSD", 10000000 * 100, 2);
 
-    const SwapFactory = loadContractFactory('node_modules/@uniswap/v2-core/build/UniswapV2Factory.json', owner);
+    Oracle = await ethers.getContractFactory("UniSwapV2OracleSimple");
+    SwapFactory = loadContractFactory('node_modules/@uniswap/v2-core/build/UniswapV2Factory.json', owner);
+    SwapPair = loadContractFactory('node_modules/@uniswap/v2-core/build/UniswapV2Pair.json', owner);
+  });
+
+  beforeEach(async function () {
     const factory = await SwapFactory.deploy(owner.address);
     await factory.createPair(wBCH.address, flexUSD.address);
     await factory.createPair(sBUSD.address, wBCH.address);
     const flexPairAddr = await factory.getPair(wBCH.address, flexUSD.address);
     const busdPairAddr = await factory.getPair(wBCH.address, sBUSD.address);
 
-    const SwapPair = loadContractFactory('node_modules/@uniswap/v2-core/build/UniswapV2Pair.json', owner);
     flexPair = SwapPair.attach(flexPairAddr);
     busdPair = SwapPair.attach(busdPairAddr);
     await addLiquidity(flexPair, wBCH, flexUSD, _1e18, 60000n * _1e18, owner);
     await addLiquidity(busdPair, wBCH, sBUSD,   _1e18, 60000n * 100n,  owner);
-
-    Oracle = await ethers.getContractFactory("UniSwapV2OracleSimple");
   });
 
   it("deploy oracles", async function () {
@@ -68,13 +71,51 @@ describe("UniSwapV2OracleSimple", function () {
   });
 
   it("get price", async function () {
-    await addLiquidity(flexPair, wBCH, flexUSD, _1e18, 60000n * _1e18, owner);
+    // await addLiquidity(flexPair, wBCH, flexUSD, _1e18, 60000n * _1e18, owner);
     const oracle = await Oracle.deploy(wBCH.address, [flexPair.address]);
     await oracle.deployed();
     await oracle.getPrice();
 
     // await printInfo(flexPair);
     expect(await oracle.callStatic.getPrice()).to.equal(60000n * _1e18);
+  });
+
+  it("get price: currentCumulativePrice", async function () {
+    const oracle = await Oracle.deploy(wBCH.address, [flexPair.address]);
+    await oracle.deployed();
+    await oracle.getPrice();
+    expect(await oracle.callStatic.getPrice()).to.equal(60000n * _1e18);
+
+    await addLiquidity(flexPair, wBCH, flexUSD, _1e18, 58000n * _1e18, owner);
+    await oracle.getPrice();
+    expect(await oracle.callStatic.getPrice()).to.equal(59800n * _1e18);
+
+    await addLiquidity(flexPair, wBCH, flexUSD, _1e18, 56000n * _1e18, owner);
+    await oracle.getPrice();
+    expect(await oracle.callStatic.getPrice()).to.equal(59333333333333333333333n);
+
+    timeAndMine.increaseTime(100);
+    await oracle.getPrice();
+    expect(await oracle.callStatic.getPrice()).to.equal(58110091743119266055045n);
+  });
+
+  it("getPriceWithoutUpdate: currentCumulativePrice", async function () {
+    const oracle = await Oracle.deploy(wBCH.address, [flexPair.address]);
+    await oracle.deployed();
+    await oracle.update();
+    expect(await oracle.getPriceWithoutUpdate()).to.equal(60000n * _1e18);
+
+    await addLiquidity(flexPair, wBCH, flexUSD, _1e18, 58000n * _1e18, owner);
+    await oracle.getPrice();
+    expect(await oracle.getPriceWithoutUpdate()).to.equal(59800n * _1e18);
+
+    await addLiquidity(flexPair, wBCH, flexUSD, _1e18, 56000n * _1e18, owner);
+    await oracle.getPrice();
+    expect(await oracle.getPriceWithoutUpdate()).to.equal(59333333333333333333333n);
+
+    // timeAndMine.increaseTime(100);
+    // await oracle.getPrice();
+    // expect(await oracle.getPriceWithoutUpdate()).to.equal(58110091743119266055045n);
   });
 
 });
@@ -90,6 +131,7 @@ async function addLiquidity(pair, token0, token1, amt0, amt1, owner) {
 }
 
 async function printInfo(pair) {
+  await pair.sync();
   let [r0, r1, ts] = await pair.getReserves();
   let p0c = await pair.price0CumulativeLast();
   let p1c = await pair.price1CumulativeLast();

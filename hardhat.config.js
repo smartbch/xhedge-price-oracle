@@ -14,9 +14,19 @@ task("accounts", "Prints the list of accounts", async (taskArgs, hre) => {
 // You need to export an object to set up your config
 // Go to https://hardhat.org/config/ to learn more
 
+const KEY = process.env.KEY;
+console.log('KEY:', KEY);
+
 /**
  * @type import('hardhat/config').HardhatUserConfig
  */
 module.exports = {
   solidity: "0.7.6",
+  networks: {
+    sbch_mainnet: {
+      url: 'http://13.213.50.64:8545',
+      accounts: [KEY],
+      gasPrice: 1050000000,
+    },
+  },
 };

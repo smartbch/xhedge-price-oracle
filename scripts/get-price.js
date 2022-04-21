@@ -1,8 +1,8 @@
 const hre = require("hardhat");
 
-const priceOracleAddr = '0x';
+const priceOracleAddr = '0xa1b0C0158b8602de44A291B563FAd733baE10Eeb';
 const priceOracleABI = [
-  `function getPrice() external returns (uint)`,
+  `function getPrice() external view returns (uint)`,
 ];
 
 main()
@@ -18,5 +18,5 @@ async function main() {
 
   const oracle = new ethers.Contract(priceOracleAddr, priceOracleABI, provider);
   const price = await oracle.getPrice();
-  console.log('price:', price);
+  console.log('price:', ethers.utils.formatUnits(price));
 }

@@ -6,7 +6,7 @@ import "./IPriceOracle.sol";
 // Debug PriceOracle for smartbch mainnet
 contract FixedOracle is IPriceOracle {
 
-    function getPrice() public view override returns (uint) {
+    function getPrice() public pure override returns (uint) {
         return 350 * (10 ** 18);
     }
 

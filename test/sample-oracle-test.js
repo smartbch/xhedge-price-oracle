@@ -7,10 +7,14 @@ const _1e10 = 10n ** 10n;
 const _1e18 = 10n ** 18n;
 const _1e20 = 10n ** 20n;
 
+const WINDOW_SIZE = 12 * 3600;
+const GRANULARITY = 24;
+const PERIOD_SIZE = 30 * 60;
+
 describe("UniSwapV2Oracle", function () {
 
   let owner, alice, bob;
-  let wBCH, fUSD, xUSD;
+  let wBCH, fUSD, xUSD, yUSD;
   let SwapFactory, SwapPair;
   let fusdPair, xusdPair, yusdPair;
   let Oracle;
@@ -19,10 +23,14 @@ describe("UniSwapV2Oracle", function () {
     [owner, alice, bob] = await ethers.getSigners();
 
     const TestERC20 = await ethers.getContractFactory("TestERC20");
-    wBCH = await TestERC20.deploy("wBCH", 10000000n * _1e18, 18);
-    fUSD = await TestERC20.deploy("fUSD", 10000000n * _1e18, 18);
-    xUSD = await TestERC20.deploy("xUSD", 10000000n * _1e10, 10);
+    fUSD = await TestERC20.deploy("fUSD", 10000000n * _1e10, 10);
+    xUSD = await TestERC20.deploy("xUSD", 10000000n * _1e18, 18);
     yUSD = await TestERC20.deploy("yUSD", 10000000n * _1e20, 20);
+    wBCH = await TestERC20.deploy("wBCH", 10000000n * _1e18, 18);
+    console.log('wBCH:', wBCH.address);
+    console.log('fUSD:', fUSD.address);
+    console.log('xUSD:', xUSD.address);
+    console.log('yUSD:', yUSD.address);
 
     Oracle = await ethers.getContractFactory("UniSwapV2Oracle");
     SwapFactory = loadContractFactory('node_modules/@uniswap/v2-core/build/UniswapV2Factory.json', owner);
@@ -31,7 +39,7 @@ describe("UniSwapV2Oracle", function () {
 
   beforeEach(async function () {
     const factory = await SwapFactory.deploy(owner.address);
-    await factory.createPair(wBCH.address, fUSD.address);
+    await factory.createPair(fUSD.address, wBCH.address);
     await factory.createPair(xUSD.address, wBCH.address);
     await factory.createPair(yUSD.address, wBCH.address);
     const fusdPairAddr = await factory.getPair(wBCH.address, fUSD.address);
@@ -41,105 +49,114 @@ describe("UniSwapV2Oracle", function () {
     fusdPair = SwapPair.attach(fusdPairAddr);
     xusdPair = SwapPair.attach(xusdPairAddr);
     yusdPair = SwapPair.attach(yusdPairAddr);
-    await addLiquidity(fusdPair, wBCH, fUSD, _1e18, 60000n * _1e18, owner);
-    await addLiquidity(xusdPair, wBCH, xUSD, _1e18, 60000n * _1e10, owner);
-    await addLiquidity(yusdPair, wBCH, yUSD, _1e20, 60000n * _1e20, owner);
+    await addLiquidity(fusdPair, wBCH, fUSD, _1e18,      600n * _1e10     , owner);
+    await addLiquidity(xusdPair, wBCH, xUSD, _1e18 * 2n, 500n * _1e18 * 2n, owner);
+    await addLiquidity(yusdPair, wBCH, yUSD, _1e18 * 3n, 400n * _1e20 * 3n, owner);
   });
 
-  it("deploy oracles", async function () {
-    const oracle0 = await Oracle.deploy(wBCH.address, []);
-    await oracle0.deployed();
-    expect(await getTrackedPairs(oracle0)).to.deep.equal([]);
+  it("deploy oracle", async () => {
+    const pairs = [fusdPair.address, xusdPair.address, yusdPair.address];
+    const oracle = await Oracle.deploy(wBCH.address, pairs);
+    await oracle.deployed();
+    expect(await getPairAddrs(oracle)).to.deep.equal(pairs);
+    // console.log(JSON.stringify(await getPairs(oracle), null, 2));
+    console.table(await getPairs(oracle));
 
-    const oracle1 = await Oracle.deploy(wBCH.address, [fusdPair.address]);
-    await oracle1.deployed();
-    expect(await getTrackedPairs(oracle1)).to.deep.equal([fusdPair.address]);
+    // wait oracle to be ready
+    for (let i = 1; i < GRANULARITY; i++) {
+      await expect(oracle.getPrice()).to.be.revertedWith('Oracle: NOT_READY');
+      await skipTime(PERIOD_SIZE + 1);
+      // console.log(`update#${i}`);
+      await oracle.connect(alice).update();
+    }
+    // console.log(JSON.stringify(await getPairs(oracle), null, 2));
+    await oracle.getPrice(); // ok
 
-    const oracle2 = await Oracle.deploy(wBCH.address, [yusdPair.address, xusdPair.address]);
-    await oracle2.deployed();
-    expect(await getTrackedPairs(oracle2)).to.deep.equal([yusdPair.address, xusdPair.address]);
+    // check prices
+    expect(await viewPriceOfPair(oracle, 0)).to.deep.equal([ '600.00', '1.00' ]);
+    expect(await viewPriceOfPair(oracle, 1)).to.deep.equal([ '500.00', '2.00' ]);
+    expect(await viewPriceOfPair(oracle, 2)).to.deep.equal([ '400.00', '3.00' ]);
+    expect(await viewPrice(oracle)).to.equal('466.67'); // (600*1 + 500*2 + 400*3)/6
   });
 
-  it("add/remove pairs", async function () {
-    const oracle = await Oracle.deploy(wBCH.address, []);
+  it("moving averages", async () => {
+    const pairs = [fusdPair.address, xusdPair.address, yusdPair.address];
+    const oracle = await Oracle.deploy(wBCH.address, pairs);
     await oracle.deployed();
 
-    await oracle.addPair(fusdPair.address);
-    await oracle.addPair(xusdPair.address);
-    await oracle.addPair(yusdPair.address);
-    expect(await getTrackedPairs(oracle)).to.deep.equal(
-      [fusdPair.address, xusdPair.address, yusdPair.address]);
+    for (let i = 0; i < GRANULARITY; i++) {
+      await skipTime(PERIOD_SIZE + 1);
+      await addLiquidity(xusdPair, wBCH, xUSD, _1e18, (500n + 10n * BigInt(i + 1)) * _1e18, owner);
+      await oracle.connect(alice).update();
+    }
+    await oracle.getPrice(); // ok
 
-    await oracle.removePair(xusdPair.address);
-    expect(await getTrackedPairs(oracle)).to.deep.equal(
-      [fusdPair.address, yusdPair.address]);
-
-    await oracle.addPair(xusdPair.address);
-    expect(await getTrackedPairs(oracle)).to.deep.equal(
-      [fusdPair.address, yusdPair.address, xusdPair.address]);
-
-    await oracle.removePair(fusdPair.address);
-    expect(await getTrackedPairs(oracle)).to.deep.equal(
-      [xusdPair.address, yusdPair.address]);
+    // check prices
+    // console.log(JSON.stringify(await getPairs(oracle), null, 2));
+    expect(await viewPriceOfPair(oracle, 0)).to.deep.equal([ '600.00', '1.00' ]);
+    expect(await viewPriceOfPair(oracle, 1)).to.deep.equal([ '556.01', '3.00' ]);
+    expect(await viewPriceOfPair(oracle, 2)).to.deep.equal([ '400.00', '3.00' ]);
+    expect(await viewPrice(oracle)).to.equal('495.43'); // (600*1 + 556*3 + 400*3)/7
   });
 
-  it("add/remove pairs: not owner!", async function () {
-    const oracle = await Oracle.deploy(wBCH.address, [xusdPair.address, yusdPair.address]);
+  it("update once per epoch", async () => {
+    const pairs = [fusdPair.address, xusdPair.address, yusdPair.address];
+    const oracle = await Oracle.deploy(wBCH.address, pairs);
     await oracle.deployed();
 
-    await expect(oracle.connect(alice).addPair(yusdPair.address)).to.be
-      .revertedWith('Ownable: caller is not the owner');
-    await expect(oracle.connect(alice).addPair(yusdPair.address)).to.be
-      .revertedWith('Ownable: caller is not the owner');
+    const lastUpdatedTime = await oracle.lastUpdatedTime();
+    await skipTime(PERIOD_SIZE/3);
+    await oracle.update();
+    expect(await oracle.lastUpdatedTime()).to.equal(lastUpdatedTime);
+
+    await skipTime(PERIOD_SIZE/3);
+    await oracle.update();
+    expect(await oracle.lastUpdatedTime()).to.equal(lastUpdatedTime);
+
+    await skipTime(PERIOD_SIZE/3 + 2);
+    await oracle.update();
+    expect(await oracle.lastUpdatedTime()).to.gt(lastUpdatedTime);
   });
 
-  // it("get price", async function () {
-  //   // await addLiquidity(fusdPair, wBCH, fUSD, _1e18, 60000n * _1e18, owner);
-  //   const oracle = await Oracle.deploy(wBCH.address, [fusdPair.address]);
-  //   await oracle.deployed();
-  //   await oracle.getPrice();
+  it("update by getPrice()", async () => {
+    const pairs = [fusdPair.address, xusdPair.address, yusdPair.address];
+    const oracle = await Oracle.deploy(wBCH.address, pairs);
+    await oracle.deployed();
 
-  //   // await printInfo(fusdPair);
-  //   expect(await oracle.callStatic.getPrice()).to.equal(60000n * _1e18);
-  // });
+    for (let i = 0; i < GRANULARITY; i++) {
+      await skipTime(PERIOD_SIZE + 1);
+      await oracle.connect(alice).update();
+    }
+    await oracle.getPrice(); // ok
+    const lastUpdatedTime = await oracle.lastUpdatedTime();
 
-  // it("get price: currentCumulativePrice", async function () {
-  //   const oracle = await Oracle.deploy(wBCH.address, [fusdPair.address]);
-  //   await oracle.deployed();
-  //   await oracle.getPrice();
-  //   expect(await oracle.callStatic.getPrice()).to.equal(60000n * _1e18);
+    await skipTime(PERIOD_SIZE + 1);
+    await oracle.getPrice();
+    expect(await oracle.lastUpdatedTime()).to.gt(lastUpdatedTime);
+  });
 
-  //   await addLiquidity(fusdPair, wBCH, fUSD, _1e18, 58000n * _1e18, owner);
-  //   await oracle.getPrice();
-  //   expect(await oracle.callStatic.getPrice()).to.equal(59800n * _1e18);
+  it("fix missing observations", async () => {
+    const pairs = [fusdPair.address, xusdPair.address, yusdPair.address];
+    const oracle = await Oracle.deploy(wBCH.address, pairs);
+    await oracle.deployed();
 
-  //   await addLiquidity(fusdPair, wBCH, fUSD, _1e18, 56000n * _1e18, owner);
-  //   await oracle.getPrice();
-  //   expect(await oracle.callStatic.getPrice()).to.equal(59333333333333333333333n);
+    const epoch = await getEpoch();
+    await expect(oracle.connect(alice).fixObservations(epoch))
+      .to.be.revertedWith('Oracle: SHOULD_CALL_UPDATE');
 
-  //   timeAndMine.increaseTime(100);
-  //   await oracle.getPrice();
-  //   expect(await oracle.callStatic.getPrice()).to.equal(58110091743119266055045n);
-  // });
+    await skipTime(PERIOD_SIZE * (GRANULARITY - 1));
+    await expect(oracle.connect(alice).fixObservations(epoch))
+      .to.be.revertedWith('Oracle: NO_NEED_TO_FIX');
 
-  // it("getPriceWithoutUpdate: currentCumulativePrice", async function () {
-  //   const oracle = await Oracle.deploy(wBCH.address, [fusdPair.address]);
-  //   await oracle.deployed();
-  //   await oracle.update();
-  //   expect(await oracle.getPriceWithoutUpdate()).to.equal(60000n * _1e18);
+    await skipTime(PERIOD_SIZE + 1);
+    await expect(oracle.connect(alice).fixObservations(epoch))
+      .to.be.revertedWith('Oracle: SHOULD_CALL_UPDATE');
 
-  //   await addLiquidity(fusdPair, wBCH, fUSD, _1e18, 58000n * _1e18, owner);
-  //   await oracle.getPrice();
-  //   expect(await oracle.getPriceWithoutUpdate()).to.equal(59800n * _1e18);
-
-  //   await addLiquidity(fusdPair, wBCH, fUSD, _1e18, 56000n * _1e18, owner);
-  //   await oracle.getPrice();
-  //   expect(await oracle.getPriceWithoutUpdate()).to.equal(59333333333333333333333n);
-
-  //   // timeAndMine.increaseTime(100);
-  //   // await oracle.getPrice();
-  //   // expect(await oracle.getPriceWithoutUpdate()).to.equal(58110091743119266055045n);
-  // });
+    await skipTime(PERIOD_SIZE + 1);
+    await oracle.connect(alice).fixObservations(epoch); // ok
+    await expect(oracle.connect(alice).fixObservations(epoch))
+      .to.be.revertedWith('Oracle: NO_NEED_TO_FIX');
+  });
 
 });
 
@@ -153,26 +170,49 @@ async function addLiquidity(pair, token0, token1, amt0, amt1, owner) {
   await pair.mint(owner.address);
 }
 
-async function printInfo(pair) {
-  await pair.sync();
-  let [r0, r1, ts] = await pair.getReserves();
-  let p0c = await pair.price0CumulativeLast();
-  let p1c = await pair.price1CumulativeLast();
-  console.log('r0:', r0.toString());
-  console.log('r1:', r1.toString());
-  console.log('ts:', ts);
-  console.log('p0c:', p0c.toString());
-  console.log('p1c:', p1c.toString());
+async function viewPrice(oracle) {
+  return bn18ToNum(await oracle.viewPrice()).toFixed(2);
+}
+async function viewPriceOfPair(oracle, pairIdx) {
+  const [price, weight] = await oracle.viewPriceOfPair(pairIdx);
+  return [
+    bn18ToNum(price).toFixed(2),
+    bn18ToNum(weight).toFixed(2),
+  ];
 }
 
-async function getTrackedPairs(oracle) {
-  const pairs = [];
-  for (let i = 0; ; i++) {
-    try {
-      pairs.push((await oracle.pairs(i)).addr);
-    } catch (e) {
-      break;
-    }
-  }
-  return pairs;
+async function getPairs(oracle) {
+  const pairs = await oracle.getPairs();
+  return pairs.map(p => ({
+    addr: p.addr,
+    wbchIdx: p.wbchIdx,
+    usdDecimals: p.usdDecimals,
+    observations: p.observations.map(o => ({
+      t: Number(o.timestamp),
+      p: o.priceCumulative.toHexString(),
+      r: bn18ToNum(o.wbchReserve),
+    })),
+  }));
+}
+
+async function getPairAddrs(oracle) {
+  const pairs = await oracle.getPairs();
+  return pairs.map(p => p.addr);
+}
+
+async function getEpoch() {
+  const timestamp = await getTime();
+  const epochPeriod = Math.floor(timestamp / PERIOD_SIZE);
+  return epochPeriod % GRANULARITY;
+}
+async function getTime() {
+  return (await ethers.provider.getBlock('latest')).timestamp;
+}
+async function skipTime(seconds) {
+  await ethers.provider.send("evm_increaseTime", [seconds]);
+  await ethers.provider.send("evm_mine");
+}
+
+function bn18ToNum(n) {
+  return Number(ethers.utils.formatUnits(n));
 }

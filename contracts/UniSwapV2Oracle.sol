@@ -24,43 +24,45 @@ struct Pair {
     address addr;
     uint8 wbchIdx;
     uint8 usdDecimals;
+    uint64 effectiveTime;
     Observation[] observations;
 }
 
 contract UniSwapV2Oracle is Ownable, IPriceOracle {
     using SafeMath for uint;
 
-    address public constant WBCH_ADDR = 0x3743eC0673453E5009310C727Ba4eaF7b3a1cc04;
-    uint public constant CYCLE = 30 minutes;
+    address public immutable WBCH_ADDR; // 0x3743eC0673453E5009310C727Ba4eaF7b3a1cc04;
     uint public constant WINDOW_SIZE = 12 hours;
     uint8 public constant GRANULARITY = 24;
     uint public constant PERIOD_SIZE = WINDOW_SIZE / GRANULARITY; // 30 minutes
+    uint public constant NEW_PAIR_DELAY_TIME = 3 days;
 
     Pair[] public pairs;
     uint lastSamplingTime;
     uint avgPrice;
 
-    constructor(address[] memory pairAddrs) {
+    constructor(address wbchAddr, address[] memory pairAddrs) {
+        WBCH_ADDR = wbchAddr;
         for (uint i = 0; i < pairAddrs.length; i++) {
-            _addPair(pairAddrs[i]);
+            _addPair(wbchAddr, pairAddrs[i]);
         }
     }
 
     function addPair(address pairAddr) public onlyOwner {
-        _addPair(pairAddr);
+        _addPair(WBCH_ADDR, pairAddr);
     }
 
-    function _addPair(address pairAddr) private {
+    function _addPair(address wbchAddr, address pairAddr) private {
         address token0 = IUniswapV2Pair(pairAddr).token0();
         address token1 = IUniswapV2Pair(pairAddr).token1();
 
         uint8 wbchIdx;
         uint8 usdDecimals;
-        if (token0 == WBCH_ADDR) {
+        if (token0 == wbchAddr) {
             wbchIdx = 0;
             usdDecimals = IERC20(token1).decimals();
         } else {
-            require(token1 == WBCH_ADDR, "Oracle: WBCH_NOT_IN_PAIR");
+            require(token1 == wbchAddr, "Oracle: WBCH_NOT_IN_PAIR");
             wbchIdx = 1;
             usdDecimals = IERC20(token0).decimals();
         }
@@ -70,6 +72,7 @@ contract UniSwapV2Oracle is Ownable, IPriceOracle {
         newPair.addr = pairAddr;
         newPair.wbchIdx = wbchIdx;
         newPair.usdDecimals = usdDecimals;
+        newPair.effectiveTime = uint64(block.timestamp + NEW_PAIR_DELAY_TIME);
 
         // uint priceCumulative = currentCumulativePrice(pairAddr, wbchIdx);
         for (uint i = 0; i < GRANULARITY; i++) {
@@ -99,7 +102,7 @@ contract UniSwapV2Oracle is Ownable, IPriceOracle {
 
     function update() public {
         uint timeElapsed = block.timestamp - lastSamplingTime;
-        if (timeElapsed > PERIOD_SIZE) {
+        if (timeElapsed < PERIOD_SIZE) {
             return;
         }
 
@@ -126,12 +129,13 @@ contract UniSwapV2Oracle is Ownable, IPriceOracle {
         uint kSum;
         for (uint i = 0; i < pairs.length; i++) {
             Pair storage pair = pairs[i];
-            uint k = getMinK(pair.observations);
-            if (k > 0) {
+            if (pair.effectiveTime > block.timestamp) {
+                uint k = getMinK(pair.observations);
                 priceSum += getPairPrice(pair, firstObservationIndex, currObservationIndex) * k;
                 kSum += k;
             }
         }
+        require(kSum > 0, 'Oracle: NO_EFFECTIVE_PAIRS');
         return (priceSum / kSum) * (10**18) / (2**112);
     }
 
@@ -161,9 +165,9 @@ contract UniSwapV2Oracle is Ownable, IPriceOracle {
         // align decimals
         uint8 usdDec = pair.usdDecimals;
         if (usdDec > 18) {
-            price *= (10 ** (usdDec - 18));
-        } else if (usdDec < 18) {
             price /= (10 ** (18 - usdDec));
+        } else if (usdDec < 18) {
+            price *= (10 ** (usdDec - 18));
         }
         return price;
     }

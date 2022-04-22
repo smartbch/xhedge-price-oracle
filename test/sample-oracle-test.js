@@ -3,14 +3,16 @@ const fs = require('fs');
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
 
+const _1e10 = 10n ** 10n;
 const _1e18 = 10n ** 18n;
+const _1e20 = 10n ** 20n;
 
-describe("UniSwapV2OracleSimple", function () {
+describe("UniSwapV2Oracle", function () {
 
   let owner, alice, bob;
-  let wBCH, flexUSD, sBUSD;
+  let wBCH, fUSD, xUSD;
   let SwapFactory, SwapPair;
-  let flexPair, busdPair;
+  let fusdPair, xusdPair, yusdPair;
   let Oracle;
 
   before(async function () {
@@ -18,25 +20,30 @@ describe("UniSwapV2OracleSimple", function () {
 
     const TestERC20 = await ethers.getContractFactory("TestERC20");
     wBCH = await TestERC20.deploy("wBCH", 10000000n * _1e18, 18);
-    flexUSD = await TestERC20.deploy("flexUSD", 10000000n * _1e18, 18);
-    sBUSD = await TestERC20.deploy("sBUSD", 10000000 * 100, 2);
+    fUSD = await TestERC20.deploy("fUSD", 10000000n * _1e18, 18);
+    xUSD = await TestERC20.deploy("xUSD", 10000000n * _1e10, 10);
+    yUSD = await TestERC20.deploy("yUSD", 10000000n * _1e20, 20);
 
-    Oracle = await ethers.getContractFactory("UniSwapV2OracleSimple");
+    Oracle = await ethers.getContractFactory("UniSwapV2Oracle");
     SwapFactory = loadContractFactory('node_modules/@uniswap/v2-core/build/UniswapV2Factory.json', owner);
     SwapPair = loadContractFactory('node_modules/@uniswap/v2-core/build/UniswapV2Pair.json', owner);
   });
 
   beforeEach(async function () {
     const factory = await SwapFactory.deploy(owner.address);
-    await factory.createPair(wBCH.address, flexUSD.address);
-    await factory.createPair(sBUSD.address, wBCH.address);
-    const flexPairAddr = await factory.getPair(wBCH.address, flexUSD.address);
-    const busdPairAddr = await factory.getPair(wBCH.address, sBUSD.address);
+    await factory.createPair(wBCH.address, fUSD.address);
+    await factory.createPair(xUSD.address, wBCH.address);
+    await factory.createPair(yUSD.address, wBCH.address);
+    const fusdPairAddr = await factory.getPair(wBCH.address, fUSD.address);
+    const xusdPairAddr = await factory.getPair(wBCH.address, xUSD.address);
+    const yusdPairAddr = await factory.getPair(wBCH.address, yUSD.address);
 
-    flexPair = SwapPair.attach(flexPairAddr);
-    busdPair = SwapPair.attach(busdPairAddr);
-    await addLiquidity(flexPair, wBCH, flexUSD, _1e18, 60000n * _1e18, owner);
-    await addLiquidity(busdPair, wBCH, sBUSD,   _1e18, 60000n * 100n,  owner);
+    fusdPair = SwapPair.attach(fusdPairAddr);
+    xusdPair = SwapPair.attach(xusdPairAddr);
+    yusdPair = SwapPair.attach(yusdPairAddr);
+    await addLiquidity(fusdPair, wBCH, fUSD, _1e18, 60000n * _1e18, owner);
+    await addLiquidity(xusdPair, wBCH, xUSD, _1e18, 60000n * _1e10, owner);
+    await addLiquidity(yusdPair, wBCH, yUSD, _1e20, 60000n * _1e20, owner);
   });
 
   it("deploy oracles", async function () {
@@ -44,79 +51,95 @@ describe("UniSwapV2OracleSimple", function () {
     await oracle0.deployed();
     expect(await getTrackedPairs(oracle0)).to.deep.equal([]);
 
-    const oracle1 = await Oracle.deploy(wBCH.address, [flexPair.address]);
+    const oracle1 = await Oracle.deploy(wBCH.address, [fusdPair.address]);
     await oracle1.deployed();
-    expect(await getTrackedPairs(oracle1)).to.deep.equal([flexPair.address]);
+    expect(await getTrackedPairs(oracle1)).to.deep.equal([fusdPair.address]);
 
-    const oracle2 = await Oracle.deploy(wBCH.address, [flexPair.address, busdPair.address]);
+    const oracle2 = await Oracle.deploy(wBCH.address, [yusdPair.address, xusdPair.address]);
     await oracle2.deployed();
-    expect(await getTrackedPairs(oracle2)).to.deep.equal([flexPair.address, busdPair.address]);
+    expect(await getTrackedPairs(oracle2)).to.deep.equal([yusdPair.address, xusdPair.address]);
   });
 
   it("add/remove pairs", async function () {
     const oracle = await Oracle.deploy(wBCH.address, []);
     await oracle.deployed();
 
-    await oracle.addPair(flexPair.address);
-    await oracle.addPair(flexPair.address);
-    await oracle.addPair(busdPair.address);
-    await oracle.addPair(flexPair.address);
-    await oracle.addPair(flexPair.address);
+    await oracle.addPair(fusdPair.address);
+    await oracle.addPair(xusdPair.address);
+    await oracle.addPair(yusdPair.address);
     expect(await getTrackedPairs(oracle)).to.deep.equal(
-      [flexPair.address, flexPair.address, busdPair.address, flexPair.address, flexPair.address]);
+      [fusdPair.address, xusdPair.address, yusdPair.address]);
 
-    await oracle.removePair(busdPair.address);
+    await oracle.removePair(xusdPair.address);
     expect(await getTrackedPairs(oracle)).to.deep.equal(
-      [flexPair.address, flexPair.address, flexPair.address, flexPair.address]);
+      [fusdPair.address, yusdPair.address]);
+
+    await oracle.addPair(xusdPair.address);
+    expect(await getTrackedPairs(oracle)).to.deep.equal(
+      [fusdPair.address, yusdPair.address, xusdPair.address]);
+
+    await oracle.removePair(fusdPair.address);
+    expect(await getTrackedPairs(oracle)).to.deep.equal(
+      [xusdPair.address, yusdPair.address]);
   });
 
-  it("get price", async function () {
-    // await addLiquidity(flexPair, wBCH, flexUSD, _1e18, 60000n * _1e18, owner);
-    const oracle = await Oracle.deploy(wBCH.address, [flexPair.address]);
+  it("add/remove pairs: not owner!", async function () {
+    const oracle = await Oracle.deploy(wBCH.address, [xusdPair.address, yusdPair.address]);
     await oracle.deployed();
-    await oracle.getPrice();
 
-    // await printInfo(flexPair);
-    expect(await oracle.callStatic.getPrice()).to.equal(60000n * _1e18);
+    await expect(oracle.connect(alice).addPair(yusdPair.address)).to.be
+      .revertedWith('Ownable: caller is not the owner');
+    await expect(oracle.connect(alice).addPair(yusdPair.address)).to.be
+      .revertedWith('Ownable: caller is not the owner');
   });
 
-  it("get price: currentCumulativePrice", async function () {
-    const oracle = await Oracle.deploy(wBCH.address, [flexPair.address]);
-    await oracle.deployed();
-    await oracle.getPrice();
-    expect(await oracle.callStatic.getPrice()).to.equal(60000n * _1e18);
+  // it("get price", async function () {
+  //   // await addLiquidity(fusdPair, wBCH, fUSD, _1e18, 60000n * _1e18, owner);
+  //   const oracle = await Oracle.deploy(wBCH.address, [fusdPair.address]);
+  //   await oracle.deployed();
+  //   await oracle.getPrice();
 
-    await addLiquidity(flexPair, wBCH, flexUSD, _1e18, 58000n * _1e18, owner);
-    await oracle.getPrice();
-    expect(await oracle.callStatic.getPrice()).to.equal(59800n * _1e18);
+  //   // await printInfo(fusdPair);
+  //   expect(await oracle.callStatic.getPrice()).to.equal(60000n * _1e18);
+  // });
 
-    await addLiquidity(flexPair, wBCH, flexUSD, _1e18, 56000n * _1e18, owner);
-    await oracle.getPrice();
-    expect(await oracle.callStatic.getPrice()).to.equal(59333333333333333333333n);
+  // it("get price: currentCumulativePrice", async function () {
+  //   const oracle = await Oracle.deploy(wBCH.address, [fusdPair.address]);
+  //   await oracle.deployed();
+  //   await oracle.getPrice();
+  //   expect(await oracle.callStatic.getPrice()).to.equal(60000n * _1e18);
 
-    timeAndMine.increaseTime(100);
-    await oracle.getPrice();
-    expect(await oracle.callStatic.getPrice()).to.equal(58110091743119266055045n);
-  });
+  //   await addLiquidity(fusdPair, wBCH, fUSD, _1e18, 58000n * _1e18, owner);
+  //   await oracle.getPrice();
+  //   expect(await oracle.callStatic.getPrice()).to.equal(59800n * _1e18);
 
-  it("getPriceWithoutUpdate: currentCumulativePrice", async function () {
-    const oracle = await Oracle.deploy(wBCH.address, [flexPair.address]);
-    await oracle.deployed();
-    await oracle.update();
-    expect(await oracle.getPriceWithoutUpdate()).to.equal(60000n * _1e18);
+  //   await addLiquidity(fusdPair, wBCH, fUSD, _1e18, 56000n * _1e18, owner);
+  //   await oracle.getPrice();
+  //   expect(await oracle.callStatic.getPrice()).to.equal(59333333333333333333333n);
 
-    await addLiquidity(flexPair, wBCH, flexUSD, _1e18, 58000n * _1e18, owner);
-    await oracle.getPrice();
-    expect(await oracle.getPriceWithoutUpdate()).to.equal(59800n * _1e18);
+  //   timeAndMine.increaseTime(100);
+  //   await oracle.getPrice();
+  //   expect(await oracle.callStatic.getPrice()).to.equal(58110091743119266055045n);
+  // });
 
-    await addLiquidity(flexPair, wBCH, flexUSD, _1e18, 56000n * _1e18, owner);
-    await oracle.getPrice();
-    expect(await oracle.getPriceWithoutUpdate()).to.equal(59333333333333333333333n);
+  // it("getPriceWithoutUpdate: currentCumulativePrice", async function () {
+  //   const oracle = await Oracle.deploy(wBCH.address, [fusdPair.address]);
+  //   await oracle.deployed();
+  //   await oracle.update();
+  //   expect(await oracle.getPriceWithoutUpdate()).to.equal(60000n * _1e18);
 
-    // timeAndMine.increaseTime(100);
-    // await oracle.getPrice();
-    // expect(await oracle.getPriceWithoutUpdate()).to.equal(58110091743119266055045n);
-  });
+  //   await addLiquidity(fusdPair, wBCH, fUSD, _1e18, 58000n * _1e18, owner);
+  //   await oracle.getPrice();
+  //   expect(await oracle.getPriceWithoutUpdate()).to.equal(59800n * _1e18);
+
+  //   await addLiquidity(fusdPair, wBCH, fUSD, _1e18, 56000n * _1e18, owner);
+  //   await oracle.getPrice();
+  //   expect(await oracle.getPriceWithoutUpdate()).to.equal(59333333333333333333333n);
+
+  //   // timeAndMine.increaseTime(100);
+  //   // await oracle.getPrice();
+  //   // expect(await oracle.getPriceWithoutUpdate()).to.equal(58110091743119266055045n);
+  // });
 
 });
 

@@ -14,29 +14,30 @@ import "./IPriceOracle.sol";
 // https://github.com/Uniswap/v2-periphery/blob/master/contracts/examples/ExampleOracleSimple.sol
 
 
-struct Observation {
-    uint64 timestamp;
-    uint112 wbchReserve;
-    uint priceCumulative;
-}
-
-struct Pair {
-    address addr;
-    uint8 wbchIdx;
-    uint8 usdDecimals;
-    Observation[] observations;
-}
-
 contract UniSwapV2Oracle is IPriceOracle {
     // using SafeMath for uint;
 
     event UpdateObservations(address indexed caller, uint newAvgPrice, uint updatedTime);
     event UpdateWbchReserve(address indexed caller, uint pairIdx, uint wbchReserve, uint updatedTime);
 
+    uint private constant EOACODEHASH = 0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470;
     // params of moving averages
     uint private constant WINDOW_SIZE = 12 hours;
     uint8 private constant GRANULARITY = 24;
     uint private constant PERIOD_SIZE = WINDOW_SIZE / GRANULARITY; // 30 minutes
+
+    struct Observation {
+        uint64 timestamp;
+        uint112 wbchReserve; // 21M * 10**18 needs only 85 bits
+        uint priceCumulative; // suppose BCH's price is forever under 10M USD, it takes 24+112=136 bits.
+    }
+    
+    struct Pair {
+        address addr;
+        uint8 wbchIdx;
+        uint8 usdDecimals;
+        Observation[GRANULARITY] observations;
+    }
 
     Pair[] private pairs;
     uint public avgPrice; // updated after sampling pairs
@@ -70,9 +71,9 @@ contract UniSwapV2Oracle is IPriceOracle {
         newPair.wbchIdx = wbchIdx;
         newPair.usdDecimals = usdDecimals;
 
-        for (uint i = 0; i < GRANULARITY; i++) {
-            newPair.observations.push(Observation(0, 0, 0));
-        }
+        //for (uint i = 0; i < GRANULARITY; i++) { // It is meaningless to SSTORE zeros
+        //    newPair.observations.push(Observation(0, 0, 0));
+        //}
     }
 
     function getPairs() public view returns(Pair[] memory) {
@@ -95,13 +96,17 @@ contract UniSwapV2Oracle is IPriceOracle {
     function getPrice() public override returns (uint) {
         update(); // do sampling & price calc if needed
         require(avgPrice > 0, 'Oracle: NOT_READY');
-        require(priceWinodwSize <= WINDOW_SIZE, 'Oracle: MISSING_HISTORICAL_OBSERVATION');
+        require(priceWinodwSize < WINDOW_SIZE + PERIOD_SIZE, 'Oracle: MISSING_HISTORICAL_OBSERVATION');
         return avgPrice;
     }
 
     // update the cumulative price and WBCH reserve for observations at the current timestamp. 
     // these observations are updated at most once per epoch period.
     function update() public {
+        uint codeHash;
+	address sender = msg.sender;
+	assembly { codeHash := extcodehash(sender) }
+	if(codeHash == EOACODEHASH) return;
         uint8 currObservationIndex = observationIndexOf(block.timestamp);
         // console.log('currObservationIndex: %d', currObservationIndex);
         uint timeElapsed = block.timestamp - pairs[0].observations[currObservationIndex].timestamp;
@@ -157,11 +162,11 @@ contract UniSwapV2Oracle is IPriceOracle {
         if (rSum == 0) {
             return 0; // oracle is not ready
         } else {
-            return (priceSum / rSum) * (10**18) / (2**112);
+            return ((priceSum / rSum) * (10**18))>>112;
         }
     }
 
-    function getMinWbchReserve(Observation[] storage observations) private view returns (uint) {
+    function getMinWbchReserve(Observation[GRANULARITY] storage observations) private view returns (uint) {
         uint minR = type(uint).max;
         for (uint i = 0; i < observations.length; i++) {
             uint r = observations[i].wbchReserve;
@@ -190,12 +195,16 @@ contract UniSwapV2Oracle is IPriceOracle {
         } else if (usdDec < 18) {
             price *= (10 ** (18 - usdDec));
         }
-        return price;
+        return price; //at most 136 bits
     }
 
-    // update WBCH reserve for observation of the given pair at the current timestamp. 
+    // update WBCH reserve for observation of the given pair at the current time period. 
     function updateReserveOfPair(uint idx) public {
-        require(idx < pairs.length, 'Oracle: INVALID_PAIR_IDX');
+        require(idx < GRANULARITY, 'Oracle: INVALID_PAIR_IDX');
+        uint codeHash;
+	address sender = msg.sender;
+	assembly { codeHash := extcodehash(sender) }
+	if(codeHash == EOACODEHASH) return;
 
         Pair storage pair = pairs[idx];
         (address pairAddr, uint8 wbchIdx) = (pair.addr, pair.wbchIdx);

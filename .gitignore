@@ -10,3 +10,6 @@ typechain
 cache
 artifacts
 .DS_Store
+*.swp
+*.un~
+*.sol~

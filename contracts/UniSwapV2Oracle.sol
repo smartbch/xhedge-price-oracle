@@ -5,9 +5,9 @@ pragma abicoder v2;
 import "@uniswap/v2-core/contracts/interfaces/IERC20.sol";
 import "@uniswap/v2-core/contracts/interfaces/IUniswapV2Pair.sol";
 import "@uniswap/v2-periphery/contracts/libraries/UniswapV2OracleLibrary.sol";
-import "@openzeppelin/contracts/math/SafeMath.sol";
-import "./IPriceOracle.sol";
+// import "@openzeppelin/contracts/math/SafeMath.sol";
 // import "hardhat/console.sol";
+import "./IPriceOracle.sol";
 
 // References:
 // https://github.com/Uniswap/v2-periphery/blob/master/contracts/examples/ExampleSlidingWindowOracle.sol
@@ -29,6 +29,9 @@ struct Pair {
 
 contract UniSwapV2Oracle is IPriceOracle {
     // using SafeMath for uint;
+
+    event UpdateObservations(address indexed caller, uint newAvgPrice, uint updatedTime);
+    event UpdateWbchReserve(address indexed caller, uint pairIdx, uint wbchReserve, uint updatedTime);
 
     // params of moving averages
     uint private constant WINDOW_SIZE = 12 hours;
@@ -116,6 +119,7 @@ contract UniSwapV2Oracle is IPriceOracle {
         uint8 firstObservationIndex = (currObservationIndex + 1) % GRANULARITY;
         avgPrice = calcWeightedAvgPrice(firstObservationIndex, currObservationIndex);
         priceWinodwSize = uint64(block.timestamp) - pairs[0].observations[firstObservationIndex].timestamp;
+        emit UpdateObservations(msg.sender, avgPrice, block.timestamp);
     }
 
     // returns the index of the observation corresponding to the given timestamp
@@ -202,6 +206,7 @@ contract UniSwapV2Oracle is IPriceOracle {
         Observation storage observation = pair.observations[currObservationIndex];
         if (wbchReserve < observation.wbchReserve) {
             observation.wbchReserve = wbchReserve;
+            emit UpdateWbchReserve(msg.sender, idx, wbchReserve, block.timestamp);
         }
     }
 

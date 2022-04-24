@@ -7,7 +7,7 @@ import "@uniswap/v2-core/contracts/interfaces/IUniswapV2Pair.sol";
 import "@uniswap/v2-periphery/contracts/libraries/UniswapV2OracleLibrary.sol";
 import "@openzeppelin/contracts/math/SafeMath.sol";
 import "./IPriceOracle.sol";
-
+// import "hardhat/console.sol";
 
 // References:
 // https://github.com/Uniswap/v2-periphery/blob/master/contracts/examples/ExampleSlidingWindowOracle.sol
@@ -15,9 +15,9 @@ import "./IPriceOracle.sol";
 
 
 struct Observation {
-    uint timestamp;
+    uint64 timestamp;
+    uint112 wbchReserve;
     uint priceCumulative;
-    uint wbchReserve;
 }
 
 struct Pair {
@@ -28,16 +28,16 @@ struct Pair {
 }
 
 contract UniSwapV2Oracle is IPriceOracle {
-    using SafeMath for uint;
+    // using SafeMath for uint;
 
     // params of moving averages
-    uint public constant WINDOW_SIZE = 12 hours;
-    uint8 public constant GRANULARITY = 24;
-    uint public constant PERIOD_SIZE = WINDOW_SIZE / GRANULARITY; // 30 minutes
+    uint private constant WINDOW_SIZE = 12 hours;
+    uint8 private constant GRANULARITY = 24;
+    uint private constant PERIOD_SIZE = WINDOW_SIZE / GRANULARITY; // 30 minutes
 
     Pair[] private pairs;
-    uint private avgPrice; // updated after sampling pairs
-    uint public lastUpdatedTime;
+    uint public avgPrice; // updated after sampling pairs
+    uint64 public priceWinodwSize;
 
     constructor(address wbchAddr, address[] memory pairAddrs) {
         for (uint i = 0; i < pairAddrs.length; i++) {
@@ -77,33 +77,34 @@ contract UniSwapV2Oracle is IPriceOracle {
     }
 
     // debug
-    function viewPrice() public view returns (uint) {
-        return avgPrice;
+    function getLastUpdatedTime() public view returns (uint64) {
+        uint8 currObservationIndex = observationIndexOf(block.timestamp);
+        return pairs[0].observations[currObservationIndex].timestamp;
     }
-    function viewPriceOfPair(uint i) public view returns (uint price, uint weight) {
+    function getPriceOfPair(uint idx) public view returns (uint price, uint weight) {
         uint8 currObservationIndex = observationIndexOf(block.timestamp);
         uint8 firstObservationIndex = (currObservationIndex + 1) % GRANULARITY;
-        price = getPairPriceUQ112x112(pairs[i], firstObservationIndex, currObservationIndex) * (10**18) / (2**112);
-        weight = getMinWbchReserve(pairs[i].observations);
+        price = getPairPriceUQ112x112(pairs[idx], firstObservationIndex, currObservationIndex) * (10**18) / (2**112);
+        weight = getMinWbchReserve(pairs[idx].observations);
     }
  
     // return avg price, update it first if needed
     function getPrice() public override returns (uint) {
         update(); // do sampling & price calc if needed
         require(avgPrice > 0, 'Oracle: NOT_READY');
+        require(priceWinodwSize <= WINDOW_SIZE, 'Oracle: MISSING_HISTORICAL_OBSERVATION');
         return avgPrice;
     }
 
     // update the cumulative price and WBCH reserve for observations at the current timestamp. 
     // these observations are updated at most once per epoch period.
     function update() public {
-        uint timeElapsed = block.timestamp - lastUpdatedTime;
+        uint8 currObservationIndex = observationIndexOf(block.timestamp);
+        // console.log('currObservationIndex: %d', currObservationIndex);
+        uint timeElapsed = block.timestamp - pairs[0].observations[currObservationIndex].timestamp;
         if (timeElapsed < PERIOD_SIZE) {
             return;
         }
-
-        uint8 currObservationIndex = observationIndexOf(block.timestamp);
-        uint8 firstObservationIndex = (currObservationIndex + 1) % GRANULARITY;
 
         // update observations
         for (uint i = 0; i < pairs.length; i++) {
@@ -112,8 +113,9 @@ contract UniSwapV2Oracle is IPriceOracle {
         }
 
         // calc reserve-weighted avg price
+        uint8 firstObservationIndex = (currObservationIndex + 1) % GRANULARITY;
         avgPrice = calcWeightedAvgPrice(firstObservationIndex, currObservationIndex);
-        lastUpdatedTime = block.timestamp;
+        priceWinodwSize = uint64(block.timestamp) - pairs[0].observations[firstObservationIndex].timestamp;
     }
 
     // returns the index of the observation corresponding to the given timestamp
@@ -127,7 +129,7 @@ contract UniSwapV2Oracle is IPriceOracle {
         (address pairAddr, uint8 wbchIdx) = (pair.addr, pair.wbchIdx);
 
         Observation storage observation = pair.observations[observationIndex];
-        observation.timestamp = block.timestamp;
+        observation.timestamp = uint64(block.timestamp);
 
         // price0CumulativeLast = token1/token0
         // price1CumulativeLast = token0/token1
@@ -145,7 +147,7 @@ contract UniSwapV2Oracle is IPriceOracle {
         for (uint i = 0; i < pairs.length; i++) {
             Pair storage pair = pairs[i];
             uint r = getMinWbchReserve(pair.observations);
-            priceSum += getPairPriceUQ112x112(pair, firstObservationIndex, currObservationIndex) * r;
+            priceSum += getPairPriceUQ112x112(pair, firstObservationIndex, currObservationIndex) * r; // never overflow
             rSum += r;
         }
         if (rSum == 0) {
@@ -172,9 +174,10 @@ contract UniSwapV2Oracle is IPriceOracle {
         Observation storage firstObservation = pair.observations[firstObservationIndex];
         Observation storage currObservation = pair.observations[currObservationIndex];
 
+        assert(currObservation.timestamp > firstObservation.timestamp);
         uint priceDiff = currObservation.priceCumulative - firstObservation.priceCumulative;
         uint timeDiff = currObservation.timestamp - firstObservation.timestamp;
-        uint price = (priceDiff / timeDiff);
+        uint price = priceDiff / timeDiff;
 
         // align decimals
         uint8 usdDec = pair.usdDecimals;
@@ -186,13 +189,19 @@ contract UniSwapV2Oracle is IPriceOracle {
         return price;
     }
 
-    // fix mising observations of given epoch
-    function fixObservations(uint8 idx) public {
-        require(idx != observationIndexOf(block.timestamp), 'Oracle: SHOULD_CALL_UPDATE');
-        require(block.timestamp - pairs[0].observations[idx].timestamp > WINDOW_SIZE, 'Oracle: NO_NEED_TO_FIX');
-        for (uint i = 0; i < pairs.length; i++) {
-            Pair storage pair = pairs[i];
-            updatePairObservation(pair, idx);
+    // update WBCH reserve for observation of the given pair at the current timestamp. 
+    function updateReserveOfPair(uint idx) public {
+        require(idx < pairs.length, 'Oracle: INVALID_PAIR_IDX');
+
+        Pair storage pair = pairs[idx];
+        (address pairAddr, uint8 wbchIdx) = (pair.addr, pair.wbchIdx);
+        (uint112 reserve0, uint112 reserve1,) = IUniswapV2Pair(pairAddr).getReserves();
+        uint112 wbchReserve = wbchIdx == 0 ? reserve0 : reserve1;
+
+        uint8 currObservationIndex = observationIndexOf(block.timestamp);
+        Observation storage observation = pair.observations[currObservationIndex];
+        if (wbchReserve < observation.wbchReserve) {
+            observation.wbchReserve = wbchReserve;
         }
     }
 

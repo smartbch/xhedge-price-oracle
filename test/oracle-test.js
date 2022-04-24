@@ -3,7 +3,7 @@ const fs = require('fs');
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
 
-const _1e10 = 10n ** 10n;
+const _1e02 = 10n **  2n;
 const _1e18 = 10n ** 18n;
 const _1e20 = 10n ** 20n;
 
@@ -23,7 +23,7 @@ describe("UniSwapV2Oracle", function () {
     [owner, alice, bob] = await ethers.getSigners();
 
     const TestERC20 = await ethers.getContractFactory("TestERC20");
-    fUSD = await TestERC20.deploy("fUSD", 10000000n * _1e10, 10);
+    fUSD = await TestERC20.deploy("fUSD", 10000000n * _1e02,  2);
     xUSD = await TestERC20.deploy("xUSD", 10000000n * _1e18, 18);
     yUSD = await TestERC20.deploy("yUSD", 10000000n * _1e20, 20);
     wBCH = await TestERC20.deploy("wBCH", 10000000n * _1e18, 18);
@@ -49,7 +49,7 @@ describe("UniSwapV2Oracle", function () {
     fusdPair = SwapPair.attach(fusdPairAddr);
     xusdPair = SwapPair.attach(xusdPairAddr);
     yusdPair = SwapPair.attach(yusdPairAddr);
-    await addLiquidity(fusdPair, wBCH, fUSD, _1e18,      600n * _1e10     , owner);
+    await addLiquidity(fusdPair, wBCH, fUSD, _1e18,      600n * _1e02     , owner);
     await addLiquidity(xusdPair, wBCH, xUSD, _1e18 * 2n, 500n * _1e18 * 2n, owner);
     await addLiquidity(yusdPair, wBCH, yUSD, _1e18 * 3n, 400n * _1e20 * 3n, owner);
   });
@@ -104,18 +104,26 @@ describe("UniSwapV2Oracle", function () {
     const oracle = await Oracle.deploy(wBCH.address, pairs);
     await oracle.deployed();
 
-    const lastUpdatedTime = await oracle.lastUpdatedTime();
-    await skipTime(PERIOD_SIZE/3);
+    const epoch = await getEpoch();
+    const lastUpdatedTime = await getUpdatedTime(oracle, 0, epoch);
+    await skipTime(5);
     await oracle.update();
-    expect(await oracle.lastUpdatedTime()).to.equal(lastUpdatedTime);
+    expect(await getUpdatedTime(oracle, 0, epoch)).to.equal(lastUpdatedTime);
+    expect(await getUpdatedTime(oracle, 1, epoch)).to.equal(lastUpdatedTime);
+    expect(await getUpdatedTime(oracle, 2, epoch)).to.equal(lastUpdatedTime);
 
-    await skipTime(PERIOD_SIZE/3);
+    await skipTime(5);
     await oracle.update();
-    expect(await oracle.lastUpdatedTime()).to.equal(lastUpdatedTime);
+    expect(await getUpdatedTime(oracle, 0, epoch)).to.equal(lastUpdatedTime);
+    expect(await getUpdatedTime(oracle, 1, epoch)).to.equal(lastUpdatedTime);
+    expect(await getUpdatedTime(oracle, 2, epoch)).to.equal(lastUpdatedTime);
 
-    await skipTime(PERIOD_SIZE/3 + 2);
+    await skipTime(WINDOW_SIZE);
     await oracle.update();
-    expect(await oracle.lastUpdatedTime()).to.gt(lastUpdatedTime);
+    expect(await getUpdatedTime(oracle, 0, epoch)).to.gt(lastUpdatedTime);
+    expect(await getUpdatedTime(oracle, 1, epoch)).to.gt(lastUpdatedTime);
+    expect(await getUpdatedTime(oracle, 2, epoch)).to.gt(lastUpdatedTime);
+    // console.log(JSON.stringify(await getPairs(oracle), null, 2));
   });
 
   it("update by getPrice()", async () => {
@@ -128,34 +136,55 @@ describe("UniSwapV2Oracle", function () {
       await oracle.connect(alice).update();
     }
     await oracle.getPrice(); // ok
-    const lastUpdatedTime = await oracle.lastUpdatedTime();
+    const lastUpdatedTime = await getUpdatedTime(oracle, 0, await getEpoch());
 
-    await skipTime(PERIOD_SIZE + 1);
+    await skipTime(PERIOD_SIZE);
     await oracle.getPrice();
-    expect(await oracle.lastUpdatedTime()).to.gt(lastUpdatedTime);
+    expect(await getUpdatedTime(oracle, 0, await getEpoch())).to.gt(lastUpdatedTime);
   });
 
-  it("fix missing observations", async () => {
+  it("update reserve of pair", async () => {
     const pairs = [fusdPair.address, xusdPair.address, yusdPair.address];
     const oracle = await Oracle.deploy(wBCH.address, pairs);
     await oracle.deployed();
 
     const epoch = await getEpoch();
-    await expect(oracle.connect(alice).fixObservations(epoch))
-      .to.be.revertedWith('Oracle: SHOULD_CALL_UPDATE');
+    expect(await getWbchReserve(oracle, 1, epoch)).to.eq('2.00');
 
-    await skipTime(PERIOD_SIZE * (GRANULARITY - 1));
-    await expect(oracle.connect(alice).fixObservations(epoch))
-      .to.be.revertedWith('Oracle: NO_NEED_TO_FIX');
+    await addLiquidity(xusdPair, wBCH, xUSD, _1e18, 500n * _1e18, owner);
+    await oracle.connect(alice).updateReserveOfPair(1);
+    expect(await getWbchReserve(oracle, 1, epoch)).to.eq('2.00');
 
-    await skipTime(PERIOD_SIZE + 1);
-    await expect(oracle.connect(alice).fixObservations(epoch))
-      .to.be.revertedWith('Oracle: SHOULD_CALL_UPDATE');
+    await removeHalfLiquidity(xusdPair, owner);
+    await oracle.connect(alice).updateReserveOfPair(1);
+    expect(await getWbchReserve(oracle, 1, epoch)).to.eq('1.50');
 
-    await skipTime(PERIOD_SIZE + 1);
-    await oracle.connect(alice).fixObservations(epoch); // ok
-    await expect(oracle.connect(alice).fixObservations(epoch))
-      .to.be.revertedWith('Oracle: NO_NEED_TO_FIX');
+    await expect(oracle.connect(alice).updateReserveOfPair(3))
+      .to.be.revertedWith('Oracle: INVALID_PAIR_IDX');
+  });
+
+  it("missing observations", async () => {
+    const pairs = [fusdPair.address, xusdPair.address, yusdPair.address];
+    const oracle = await Oracle.deploy(wBCH.address, pairs);
+    await oracle.deployed();
+
+    for (let i = 1; i < GRANULARITY; i++) {
+      await skipTime(PERIOD_SIZE);
+      await oracle.connect(alice).update();
+    }
+    await oracle.getPrice(); // ok
+
+    await skipTime(PERIOD_SIZE);
+    for (let i = 1; i < GRANULARITY; i++) {
+      await skipTime(PERIOD_SIZE);
+      await oracle.connect(alice).update();
+    }
+    await expect(oracle.getPrice())
+      .to.be.revertedWith('Oracle: MISSING_HISTORICAL_OBSERVATION');
+
+    await skipTime(PERIOD_SIZE);
+    await oracle.connect(alice).update();
+    await oracle.getPrice(); // ok
   });
 
 });
@@ -169,18 +198,32 @@ async function addLiquidity(pair, token0, token1, amt0, amt1, owner) {
   await token1.transfer(pair.address, amt1);
   await pair.mint(owner.address);
 }
+async function removeHalfLiquidity(pair, owner) {
+  const bal = await pair.balanceOf(owner.address);
+  const balHalf = bal.div(ethers.BigNumber.from(2));
+  await pair.transfer(pair.address, balHalf);
+  await pair.burn(owner.address);
+}
 
 async function viewPrice(oracle) {
-  return bn18ToNum(await oracle.viewPrice()).toFixed(2);
+  return bn18ToNum(await oracle.avgPrice()).toFixed(2);
 }
 async function viewPriceOfPair(oracle, pairIdx) {
-  const [price, weight] = await oracle.viewPriceOfPair(pairIdx);
+  const [price, weight] = await oracle.getPriceOfPair(pairIdx);
   return [
     bn18ToNum(price).toFixed(2),
     bn18ToNum(weight).toFixed(2),
   ];
 }
 
+async function getWbchReserve(oracle, pairIdx, epoch) {
+  const pairs = await getPairs(oracle);
+  return pairs[pairIdx].observations[epoch].r.toFixed(2);
+}
+async function getUpdatedTime(oracle, pairIdx, epoch) {
+  const pairs = await getPairs(oracle);
+  return pairs[pairIdx].observations[epoch].t;
+}
 async function getPairs(oracle) {
   const pairs = await oracle.getPairs();
   return pairs.map(p => ({

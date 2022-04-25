@@ -127,21 +127,17 @@ describe("UniSwapV2Oracle", function () {
     // console.log(JSON.stringify(await getPairs(oracle), null, 2));
   });
 
-  it("update by getPrice()", async () => {
+  it("update by contracts", async () => {
     const pairs = [fusdPair.address, xusdPair.address, yusdPair.address];
     const oracle = await Oracle.deploy(wBCH.address, pairs);
     await oracle.deployed();
 
-    for (let i = 0; i < GRANULARITY; i++) {
-      await skipTime(PERIOD_SIZE);
-      await oracle.connect(alice).update();
-    }
-    await oracle.getPrice(); // ok
-    const lastUpdatedTime = await oracle.getLastUpdatedTime();
+    const TestUpdater = await ethers.getContractFactory("TestUpdater");
+    const updater = await TestUpdater.deploy(oracle.address);
+    await updater.deployed();
 
-    await skipTime(PERIOD_SIZE);
-    await oracle.getPrice();
-    expect(await oracle.getLastUpdatedTime()).to.gt(lastUpdatedTime);
+    await expect(updater.update()).to.be.revertedWith('Oracle: NOT_EOA');
+    await expect(updater.updateReserveOfPair(1)).to.be.revertedWith('Oracle: NOT_EOA');
   });
 
   it("update reserve of pair", async () => {

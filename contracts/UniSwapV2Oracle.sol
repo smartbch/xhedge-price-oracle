@@ -50,6 +50,14 @@ contract UniSwapV2Oracle is IPriceOracle {
         update();
     }
 
+    modifier onlyEOA() {
+        uint codeHash;
+        address sender = msg.sender;
+        assembly { codeHash := extcodehash(sender) }
+        require(codeHash == EOACODEHASH, "Oracle: NOT_EOA");
+        _;
+    }
+
     function addPair(address wbchAddr, address pairAddr) private {
         address token0 = IUniswapV2Pair(pairAddr).token0();
         address token1 = IUniswapV2Pair(pairAddr).token1();
@@ -70,10 +78,6 @@ contract UniSwapV2Oracle is IPriceOracle {
         newPair.addr = pairAddr;
         newPair.wbchIdx = wbchIdx;
         newPair.usdDecimals = usdDecimals;
-
-        //for (uint i = 0; i < GRANULARITY; i++) { // It is meaningless to SSTORE zeros
-        //    newPair.observations.push(Observation(0, 0, 0));
-        //}
     }
 
     function getPairs() public view returns(Pair[] memory) {
@@ -93,8 +97,8 @@ contract UniSwapV2Oracle is IPriceOracle {
     }
  
     // return avg price, update it first if needed
-    function getPrice() public override returns (uint) {
-        update(); // do sampling & price calc if needed
+    function getPrice() public override view returns (uint) {
+        // update(); // do sampling & price calc if needed
         require(avgPrice > 0, 'Oracle: NOT_READY');
         require(priceWinodwSize < WINDOW_SIZE + PERIOD_SIZE, 'Oracle: MISSING_HISTORICAL_OBSERVATION');
         return avgPrice;
@@ -102,12 +106,7 @@ contract UniSwapV2Oracle is IPriceOracle {
 
     // update the cumulative price and WBCH reserve for observations at the current timestamp. 
     // these observations are updated at most once per epoch period.
-    function update() public {
-        uint codeHash;
-        address sender = msg.sender;
-        assembly { codeHash := extcodehash(sender) }
-        if(codeHash != EOACODEHASH) return;
-
+    function update() public onlyEOA {
         uint8 currObservationIndex = observationIndexOf(block.timestamp);
         // console.log('currObservationIndex: %d', currObservationIndex);
         uint timeElapsed = block.timestamp - pairs[0].observations[currObservationIndex].timestamp;
@@ -200,13 +199,8 @@ contract UniSwapV2Oracle is IPriceOracle {
     }
 
     // update WBCH reserve for observation of the given pair at the current time period. 
-    function updateReserveOfPair(uint idx) public {
+    function updateReserveOfPair(uint idx) public onlyEOA {
         require(idx < pairs.length, 'Oracle: INVALID_PAIR_IDX');
-        uint codeHash;
-        address sender = msg.sender;
-        assembly { codeHash := extcodehash(sender) }
-        if(codeHash != EOACODEHASH) return;
-
         Pair storage pair = pairs[idx];
         (address pairAddr, uint8 wbchIdx) = (pair.addr, pair.wbchIdx);
         (uint112 reserve0, uint112 reserve1,) = IUniswapV2Pair(pairAddr).getReserves();

@@ -40,7 +40,7 @@ contract UniSwapV2Oracle is IPriceOracle {
     }
 
     Pair[] private pairs;
-    uint public avgPrice; // updated after sampling pairs
+    uint192 public avgPrice; // updated after sampling pairs
     uint64 public priceWinodwSize;
 
     constructor(address wbchAddr, address[] memory pairAddrs) {
@@ -122,7 +122,7 @@ contract UniSwapV2Oracle is IPriceOracle {
 
         // calc reserve-weighted avg price
         uint8 firstObservationIndex = (currObservationIndex + 1) % GRANULARITY;
-        avgPrice = calcWeightedAvgPrice(firstObservationIndex, currObservationIndex);
+        avgPrice = uint192(calcWeightedAvgPrice(firstObservationIndex, currObservationIndex));
         priceWinodwSize = uint64(block.timestamp) - pairs[0].observations[firstObservationIndex].timestamp;
         emit UpdateObservations(msg.sender, avgPrice, block.timestamp);
     }

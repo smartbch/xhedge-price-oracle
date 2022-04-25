@@ -14,12 +14,13 @@ library UniswapV2OracleLibrary {
     }
 
     // produces the cumulative price using counterfactuals to save gas and avoid a call to sync.
-    function currentCumulativePrices(
-        address pair
-    ) internal view returns (uint price0Cumulative, uint price1Cumulative, uint32 blockTimestamp) {
+    function currentCumulativePrice(
+        address pair, uint8 priceIdx
+    ) internal view returns (uint priceCumulative, uint32 blockTimestamp) {
         blockTimestamp = currentBlockTimestamp();
-        price0Cumulative = IUniswapV2Pair(pair).price0CumulativeLast();
-        price1Cumulative = IUniswapV2Pair(pair).price1CumulativeLast();
+        priceCumulative = priceIdx == 0
+            ? IUniswapV2Pair(pair).price0CumulativeLast()
+            : IUniswapV2Pair(pair).price1CumulativeLast();
 
         // if time has elapsed since the last update on the pair, mock the accumulated price values
         (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast) = IUniswapV2Pair(pair).getReserves();
@@ -28,9 +29,11 @@ library UniswapV2OracleLibrary {
             uint32 timeElapsed = blockTimestamp - blockTimestampLast;
             // addition overflow is desired
             // counterfactual
-            price0Cumulative += uint(FixedPoint.fraction(reserve1, reserve0)._x) * timeElapsed;
-            // counterfactual
-            price1Cumulative += uint(FixedPoint.fraction(reserve0, reserve1)._x) * timeElapsed;
+            if (priceIdx == 0) {
+                priceCumulative += uint(FixedPoint.fraction(reserve1, reserve0)._x) * timeElapsed;
+            } else {
+                priceCumulative += uint(FixedPoint.fraction(reserve0, reserve1)._x) * timeElapsed;
+            }
         }
     }
 }

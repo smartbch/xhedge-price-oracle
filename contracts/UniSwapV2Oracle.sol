@@ -142,8 +142,7 @@ contract UniSwapV2Oracle is IPriceOracle {
 
         // price0CumulativeLast = token1/token0
         // price1CumulativeLast = token0/token1
-        (uint priceCumulative,) = UniswapV2OracleLibrary.currentCumulativePrice(pairAddr, wbchIdx);
-        observation.priceCumulative = priceCumulative;
+        observation.priceCumulative = UniswapV2OracleLibrary.currentCumulativePrice(pairAddr, wbchIdx);
 
         (uint112 reserve0, uint112 reserve1,) = IUniswapV2Pair(pairAddr).getReserves();
         observation.wbchReserve = wbchIdx == 0 ? reserve0 : reserve1;

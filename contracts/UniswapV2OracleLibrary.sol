@@ -10,14 +10,14 @@ library UniswapV2OracleLibrary {
 
     // helper function that returns the current block timestamp within the range of uint32, i.e. [0, 2**32 - 1]
     function currentBlockTimestamp() internal view returns (uint32) {
-        return uint32(block.timestamp % 2 ** 32);
+        return uint32(block.timestamp);
     }
 
     // produces the cumulative price using counterfactuals to save gas and avoid a call to sync.
     function currentCumulativePrice(
         address pair, uint8 priceIdx
-    ) internal view returns (uint priceCumulative, uint32 blockTimestamp) {
-        blockTimestamp = currentBlockTimestamp();
+    ) internal view returns (uint priceCumulative) {
+        uint32 blockTimestamp = currentBlockTimestamp();
         priceCumulative = priceIdx == 0
             ? IUniswapV2Pair(pair).price0CumulativeLast()
             : IUniswapV2Pair(pair).price1CumulativeLast();

@@ -60,9 +60,13 @@ async function getSigner() {
 }
 
 async function tryToUpdateOracle(oracle) {
-  const now = Math.floor(Date.now() / 1000);
+  const provider = oracle.signer.provider
+  const height = await provider.getBlockNumber()
+  const blk = await provider.getBlock(height)
+  const now = blk.timestamp
   const price = await oracle.getPrice();
   const lastUpdatedTime = await oracle.getLastUpdatedTime();
+  console.log('now:', new Date(now * 1000));
   console.log('price:', ethers.utils.formatUnits(price));
   console.log('lastUpdatedTime:', new Date(lastUpdatedTime * 1000));
 

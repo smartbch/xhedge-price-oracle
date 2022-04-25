@@ -4,7 +4,7 @@ pragma abicoder v2;
 
 import "@uniswap/v2-core/contracts/interfaces/IERC20.sol";
 import "@uniswap/v2-core/contracts/interfaces/IUniswapV2Pair.sol";
-import "@uniswap/v2-periphery/contracts/libraries/UniswapV2OracleLibrary.sol";
+import "./UniswapV2OracleLibrary.sol";
 // import "@openzeppelin/contracts/math/SafeMath.sol";
 // import "hardhat/console.sol";
 import "./IPriceOracle.sol";

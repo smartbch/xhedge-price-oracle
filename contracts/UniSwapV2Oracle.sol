@@ -29,7 +29,7 @@ contract UniSwapV2Oracle is IPriceOracle {
     struct Observation {
         uint64 timestamp;
         uint112 wbchReserve; // 21M * 10**18 needs only 85 bits
-        uint priceCumulative; // suppose BCH's price is forever under 10M USD, it takes 24+112=136 bits.
+        uint priceCumulative;
     }
     
     struct Pair {
@@ -194,7 +194,8 @@ contract UniSwapV2Oracle is IPriceOracle {
         } else if (usdDec < 18) {
             price *= (10 ** (18 - usdDec));
         }
-        return price; //at most 136 bits
+        // suppose BCH's price is forever under 16.78M (2**24) USD, it takes at most 24+112=136 bits.
+        return price;
     }
 
     // update WBCH reserve for observation of the given pair at the current time period. 

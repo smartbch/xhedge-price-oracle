@@ -140,12 +140,9 @@ contract UniSwapV2Oracle is IPriceOracle {
         Observation storage observation = pair.observations[observationIndex];
         observation.timestamp = uint64(block.timestamp);
 
-        // price0CumulativeLast = token1/token0
-        // price1CumulativeLast = token0/token1
-        observation.priceCumulative = UniswapV2OracleLibrary.currentCumulativePrice(pairAddr, wbchIdx);
-
-        (uint112 reserve0, uint112 reserve1,) = IUniswapV2Pair(pairAddr).getReserves();
-        observation.wbchReserve = wbchIdx == 0 ? reserve0 : reserve1;
+        (uint priceCumulative, uint112 reserve) = UniswapV2OracleLibrary.currentCumulativePrice(pairAddr, wbchIdx);
+        observation.priceCumulative = priceCumulative;
+        observation.wbchReserve = reserve;
     }
 
     function calcWeightedAvgPrice(uint8 firstObservationIndex, 

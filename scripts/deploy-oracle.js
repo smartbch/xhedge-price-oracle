@@ -42,7 +42,7 @@ async function main() {
   const pairsInfo = await queryPairs(pairs, signer);
   console.table(pairsInfo);
 
-  const UniswapV2Oracle = await ethers.getContractFactory("UniswapV2Oracle");
+  const UniswapV2Oracle = await ethers.getContractFactory("UniSwapV2Oracle");
   const uniswapV2Oracle = await UniswapV2Oracle.deploy(WBCH_ADDR, pairs);
   await uniswapV2Oracle.deployed();
   console.log("UniswapV2Oracle deployed to:", uniswapV2Oracle.address);

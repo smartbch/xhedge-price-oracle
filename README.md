@@ -1,15 +1,20 @@
-# Basic Sample Hardhat Project
+# Price Oracle for smartBCH XHedge
 
-This project demonstrates a basic Hardhat use case. It comes with a sample contract, a test for that contract, a sample script that deploys that contract, and an example of a task implementation, which simply lists the available accounts.
+For more detailed information about smartBCH XHedge and it's price oracle, see [this article](https://github.com/smartbch/docs/blob/main/developers-guide/xhedge-contract.md).
 
-Try running some of the following tasks:
 
-```shell
-npx hardhat accounts
-npx hardhat compile
-npx hardhat clean
+
+Run unit tests:
+
+```bash
 npx hardhat test
-npx hardhat node
-node scripts/sample-script.js
-npx hardhat help
 ```
+
+
+
+Deploy to smartBCH mainnet:
+
+```
+KEY=0x<hex_key> npx hardhat run scripts/deploy-oracle.js
+```
+

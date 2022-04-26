@@ -15,6 +15,6 @@ npx hardhat test
 Deploy to smartBCH mainnet:
 
 ```
-KEY=0x<hex_key> npx hardhat run scripts/deploy-oracle.js
+KEY=0x<hex_key> npx hardhat run scripts/deploy-oracle.js --network sbch_mainnet
 ```
 
